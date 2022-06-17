@@ -1,0 +1,4 @@
+[submodule "chisel-hdmi"]
+	path = chisel-hdmi
+	url = https://github.com/milovanovic/chisel-hdmi.git
+	branch = master
