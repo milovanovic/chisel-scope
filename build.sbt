@@ -44,7 +44,11 @@ val commonSettings = Seq(
   )
 )
 
-lazy val hdmi = (project in file("."))
+lazy val hdmi = (project in file("chisel-hdmi"))
+  .settings(commonSettings: _*)
+
+lazy val scope = (project in file("."))
+  .dependsOn(hdmi)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,
