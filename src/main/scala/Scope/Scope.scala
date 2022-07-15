@@ -187,7 +187,7 @@ trait AXI4ScopePins extends AXI4Scope[FixedPoint] {
 }
 
 
-class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256) {
+class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000) {
   val params : ScopeParameters[FixedPoint] = ScopeParameters(
     proc1DParams = Proc1DParamsAndAddresses(
       procParams = (new ProcFFT1DParams(rangeSize)).params
@@ -196,7 +196,7 @@ class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256) {
       scalerParams = Scaler1DParams(
         scale = log2Ceil(128),
       ),
-      scalerAddress = AddressSet(0x0000, 0xFF)
+      scalerAddress = AddressSet(startAddress + 0x0000, 0xFF)
     ),
     proc2DParams = Proc2DParamsAndAddresses(
       procParams = ProcFFT2DParams(
@@ -210,7 +210,7 @@ class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256) {
       )
     ),
     scaler2DParams = Scaler2DParamsAndAddresses(
-      scalerAddress = AddressSet(0x0100, 0xFF)
+      scalerAddress = AddressSet(startAddress + 0x0100, 0xFF)
     ),
     asyncParams = AsyncParamsAndAddresses(
       asyncParams = AsyncLoggerParams(
