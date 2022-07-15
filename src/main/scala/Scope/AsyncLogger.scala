@@ -3,10 +3,6 @@ package hdmi.scope
 import chisel3._ 
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
-import chisel3.experimental.FixedPoint
-import chisel3.internal.requireIsChiselType
-import dsptools.numbers._
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
@@ -15,267 +11,225 @@ import freechips.rocketchip.util._
 // TODO : Set reset2 to asynchronous reset
 
 // AsyncLogger parameters
-case class AsyncLoggerParams[T <: Data: Real: BinaryRepresentation](
-  proto0   : T,     // Input/output data type
-  proto1   : T,     // Input/output data type
-  proto2   : T,     // Input/output data type
-  dataSize : Int,   // Data logger size, equal to x axis size
-) {
-  requireIsChiselType(proto0,  s"($proto0) must be chisel type")
+case class AsyncLoggerParams(
+    fft_1D: Boolean,
+    fft_2D: Boolean,
+    s_width_1D : Int,
+    s_width_2D : Int,
+    dataSize   : Int, // Data logger size, equal to x axis size
+)
+
+class AsyncLoggerIO(val fft_1D: Boolean, val fft_2D: Boolean, val s_width_1D: Int, val s_width_2D: Int) extends Bundle {
+    val clock2 = Input(Clock())
+    val reset2 = Input(Bool())
+
+    // 1D processing
+    val i_addr_x_1D   = if (fft_1D) Some(Input(UInt(16.W))) else None
+    val i_scaler_y_1D = if (fft_1D) Some(Input(UInt((s_width_1D+1).W)))  else None
+    val i_scaler_x_1D = if (fft_1D) Some(Input(UInt((s_width_1D).W)))    else None
+    val o_scaler_y_1D = if (fft_1D) Some(Output(UInt((s_width_1D+1).W))) else None
+    val o_scaler_x_1D = if (fft_1D) Some(Output(UInt((s_width_1D).W)))   else None
+
+     // 2D processing
+    val i_scaler_x_2D = if (fft_2D) Some(Input(UInt((s_width_2D).W)))    else None
+    val o_scaler_x_2D = if (fft_2D) Some(Output(UInt((s_width_2D).W)))   else None
 }
-
-// AsyncLogger IO
-class AsyncLoggerIO[T <: Data: Real](params: AsyncLoggerParams[T]) extends Bundle {
-    val out0 = Output(params.proto0)
-    val out1 = Output(params.proto0)
-    val out2 = Output(params.proto1)
-    val out3 = Output(params.proto1)
-    val out4 = Output(params.proto2)
-
-    override def cloneType: this.type = AsyncLoggerIO(params).asInstanceOf[this.type]
-}
-
 object AsyncLoggerIO {
-  def apply[T <: Data : Real](params: AsyncLoggerParams[T]): AsyncLoggerIO[T] = new AsyncLoggerIO(params)
+  def apply(fft_1D: Boolean, fft_2D: Boolean, s_width_1D: Int, s_width_2D: Int): AsyncLoggerIO = new AsyncLoggerIO(fft_1D, fft_2D, s_width_1D, s_width_2D)
 }
 
-class AsyncLogger[T <: Data: Real](params: AsyncLoggerParams[T], scalerWidth: Int, xilinxAFIFO: Boolean = false) extends LazyModule()(Parameters.empty) {
-    val inRealNode      = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
-    val inImagNode      = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
-    val inCutNode       = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
-    val inTresholdNode  = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
-    val inPeakNode      = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
+class AsyncLogger(params: AsyncLoggerParams) extends LazyModule()(Parameters.empty) {
+    val node_cut     = if (params.fft_1D) Some(AXI4StreamIdentityNode()) else None
+    val node_tresh   = if (params.fft_1D) Some(AXI4StreamIdentityNode()) else None
+    val node_peak    = if (params.fft_1D) Some(AXI4StreamIdentityNode()) else None
+    val node_doppler = if (params.fft_2D) Some(AXI4StreamIdentityNode()) else None
 
     lazy val module = new LazyModuleImp(this) {
-        val (in0, _ ) = inRealNode.in(0)
-        val (in1, _ ) = inImagNode.in(0)
-        val (in2, _ ) = inCutNode.in(0)
-        val (in3, _ ) = inTresholdNode.in(0)
-        val (in4, _ ) = inPeakNode.in(0)
+        // IOs
+        val io = IO(new AsyncLoggerIO(params.fft_1D, params.fft_2D, params.s_width_1D, params.s_width_2D))
 
-        // Inputs
-        val start       = IO(Input(Bool()))
-        val startFFT    = IO(Input(Bool()))
-        val clock2      = IO(Input(Clock())) 
-        val reset2      = IO(Input(Bool()))
-        val pixel_x     = IO(Input(UInt(16.W)))
-        val pixel_x_fft = IO(Input(UInt(16.W)))
+        val i_cut     = if (params.fft_1D) Some(node_cut.get.in(0)._1)      else None
+        val i_tresh   = if (params.fft_1D) Some(node_tresh.get.in(0)._1)    else None
+        val i_peak    = if (params.fft_1D) Some(node_peak.get.in(0)._1)     else None
+        val i_doppler = if (params.fft_2D) Some(node_doppler.get.in(0)._1)  else None
+        val o_cut     = if (params.fft_1D) Some(node_cut.get.out(0)._1)     else None
+        val o_tresh   = if (params.fft_1D) Some(node_tresh.get.out(0)._1)   else None
+        val o_peak    = if (params.fft_1D) Some(node_peak.get.out(0)._1)    else None
+        val o_doppler = if (params.fft_2D) Some(node_doppler.get.out(0)._1) else None
 
-        val scaler_y         = IO(Input(UInt((scalerWidth+1).W)))
-        val scaler_x         = IO(Input(UInt((scalerWidth).W)))
-        val fft_scaler_y     = IO(Input(UInt((scalerWidth+1).W)))
-        val fft_scaler_x     = IO(Input(UInt((scalerWidth).W)))
+        // 1D async
+        val async_scaler_y_1D = if (params.fft_1D) Some(Module(new AsyncQueue(chiselTypeOf(io.i_scaler_y_1D.get), AsyncQueueParams(depth = 8, sync = 2, safe = true)))) else None
+        val async_scaler_x_1D = if (params.fft_1D) Some(Module(new AsyncQueue(chiselTypeOf(io.i_scaler_x_1D.get), AsyncQueueParams(depth = 8, sync = 2, safe = true)))) else None
 
-        val scaler_y_out     = IO(Output(UInt((scalerWidth+1).W)))
-        val scaler_x_out     = IO(Output(UInt((scalerWidth).W)))
-        val fft_scaler_y_out = IO(Output(UInt((scalerWidth+1).W)))
-        val fft_scaler_x_out = IO(Output(UInt((scalerWidth).W)))
+        val async_cut     = if (params.fft_1D) Some(Module(new AsyncQueue(chiselTypeOf(i_cut.get.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true))))   else None
+        val async_tresh   = if (params.fft_1D) Some(Module(new AsyncQueue(chiselTypeOf(i_tresh.get.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))) else None
+        val async_peak    = if (params.fft_1D) Some(Module(new AsyncQueue(chiselTypeOf(i_peak.get.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true))))  else None
 
-        val io = IO(new AsyncLoggerIO(params))
+        // 2D async
+        val async_scaler_x_2D = if (params.fft_2D) Some(Module(new AsyncQueue(chiselTypeOf(io.i_scaler_x_2D.get), AsyncQueueParams(depth = 8, sync = 2, safe = true)))) else None
 
-        // Async queue
-        val asyncQueue0 = Module(new AsyncQueue(chiselTypeOf(in0.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncQueue1 = Module(new AsyncQueue(chiselTypeOf(in1.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncQueue2 = Module(new AsyncQueue(chiselTypeOf(in2.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncQueue3 = Module(new AsyncQueue(chiselTypeOf(in3.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncQueue4 = Module(new AsyncQueue(chiselTypeOf(in4.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-
-        val asyncStart    = Module(new AsyncQueue(chiselTypeOf(start), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncStartFFT = Module(new AsyncQueue(chiselTypeOf(startFFT), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val syncStart     = Wire(Bool())
-        val syncStartFFT  = Wire(Bool())
-
-        val asyncScaler_y     = Module(new AsyncQueue(chiselTypeOf(scaler_y),     AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncScaler_x     = Module(new AsyncQueue(chiselTypeOf(scaler_x),     AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncFFT_scaler_y = Module(new AsyncQueue(chiselTypeOf(fft_scaler_y), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
-        val asyncFFT_scaler_x = Module(new AsyncQueue(chiselTypeOf(fft_scaler_x), AsyncQueueParams(depth = 8, sync = 2, safe = true)))
+        val async_doppler = if (params.fft_2D) Some(Module(new AsyncQueue(chiselTypeOf(i_doppler.get.bits), AsyncQueueParams(depth = 8, sync = 2, safe = true)))) else None
 
         // Connect inputs
-        asyncQueue0.io.enq <> in0
-        asyncQueue1.io.enq <> in1
-        asyncQueue2.io.enq <> in2
-        asyncQueue3.io.enq <> in3
-        asyncQueue4.io.enq <> in4
-        asyncQueue0.io.enq_clock := clock
-        asyncQueue1.io.enq_clock := clock
-        asyncQueue2.io.enq_clock := clock
-        asyncQueue3.io.enq_clock := clock
-        asyncQueue4.io.enq_clock := clock
-        asyncQueue0.io.enq_reset := reset.asBool()
-        asyncQueue1.io.enq_reset := reset.asBool()
-        asyncQueue2.io.enq_reset := reset.asBool()
-        asyncQueue3.io.enq_reset := reset.asBool()
-        asyncQueue4.io.enq_reset := reset.asBool()
+        if (params.fft_1D) {
+            async_cut.get.io.enq   <> i_cut.get
+            async_tresh.get.io.enq <> i_tresh.get
+            async_peak.get.io.enq  <> i_peak.get
+            async_cut.get.io.enq_clock   := clock
+            async_tresh.get.io.enq_clock := clock
+            async_peak.get.io.enq_clock  := clock
+            async_cut.get.io.enq_reset   := reset.asBool()
+            async_tresh.get.io.enq_reset := reset.asBool()
+            async_peak.get.io.enq_reset  := reset.asBool()
 
-        // Connect output reset and clock
-        asyncQueue0.io.deq_clock := clock2
-        asyncQueue1.io.deq_clock := clock2
-        asyncQueue2.io.deq_clock := clock2
-        asyncQueue3.io.deq_clock := clock2
-        asyncQueue4.io.deq_clock := clock2
-        asyncQueue0.io.deq_reset := reset2.asBool()
-        asyncQueue1.io.deq_reset := reset2.asBool()
-        asyncQueue2.io.deq_reset := reset2.asBool()
-        asyncQueue3.io.deq_reset := reset2.asBool()
-        asyncQueue4.io.deq_reset := reset2.asBool()
+            // Connect output reset and clock
+            async_cut.get.io.deq_clock   := io.clock2
+            async_tresh.get.io.deq_clock := io.clock2
+            async_peak.get.io.deq_clock  := io.clock2
+            async_cut.get.io.deq_reset   := io.reset2.asBool()
+            async_tresh.get.io.deq_reset := io.reset2.asBool()
+            async_peak.get.io.deq_reset  := io.reset2.asBool()
 
-        // Connect asyncStart
-        asyncStart.io.enq.valid := true.B
-        asyncStart.io.enq.bits  := start
-        asyncStart.io.enq_clock := clock
-        asyncStart.io.enq_reset := reset.asBool()
-        syncStart := asyncStart.io.deq.bits
-        asyncStart.io.deq.ready := true.B
-        asyncStart.io.deq_clock := clock2
-        asyncStart.io.deq_reset := reset2.asBool()
+            // Connect async_scaler_y_1D
+            async_scaler_y_1D.get.io.enq.valid := true.B
+            async_scaler_y_1D.get.io.enq.bits  := io.i_scaler_y_1D.get
+            async_scaler_y_1D.get.io.enq_clock := clock
+            async_scaler_y_1D.get.io.enq_reset := reset.asBool()
+            io.o_scaler_y_1D.get := async_scaler_y_1D.get.io.deq.bits
+            async_scaler_y_1D.get.io.deq.ready := true.B
+            async_scaler_y_1D.get.io.deq_clock := io.clock2
+            async_scaler_y_1D.get.io.deq_reset := io.reset2.asBool()
 
-        // Connect asyncStartFFT
-        asyncStartFFT.io.enq.valid := true.B
-        asyncStartFFT.io.enq.bits  := startFFT
-        asyncStartFFT.io.enq_clock := clock
-        asyncStartFFT.io.enq_reset := reset.asBool()
-        syncStartFFT := asyncStartFFT.io.deq.bits
-        asyncStartFFT.io.deq.ready := true.B
-        asyncStartFFT.io.deq_clock := clock2
-        asyncStartFFT.io.deq_reset := reset2.asBool()
+            // Connect async_scaler_x_1D
+            async_scaler_x_1D.get.io.enq.valid := true.B
+            async_scaler_x_1D.get.io.enq.bits  := io.i_scaler_x_1D.get
+            async_scaler_x_1D.get.io.enq_clock := clock
+            async_scaler_x_1D.get.io.enq_reset := reset.asBool()
+            io.o_scaler_x_1D.get := async_scaler_x_1D.get.io.deq.bits
+            async_scaler_x_1D.get.io.deq.ready := true.B
+            async_scaler_x_1D.get.io.deq_clock := io.clock2
+            async_scaler_x_1D.get.io.deq_reset := io.reset2.asBool()
 
-        // Connect asyncScaler_y
-        asyncScaler_y.io.enq.valid := true.B
-        asyncScaler_y.io.enq.bits  := scaler_y
-        asyncScaler_y.io.enq_clock := clock
-        asyncScaler_y.io.enq_reset := reset.asBool()
-        scaler_y_out := asyncScaler_y.io.deq.bits
-        asyncScaler_y.io.deq.ready := true.B
-        asyncScaler_y.io.deq_clock := clock2
-        asyncScaler_y.io.deq_reset := reset2.asBool()
+            // Memories and counters
+            withClockAndReset(io.clock2, io.reset2) {
+                val mem_cut   = SyncReadMem(params.dataSize, chiselTypeOf(i_cut.get.bits))
+                val mem_tresh = SyncReadMem(params.dataSize, chiselTypeOf(i_tresh.get.bits))
+                val mem_peak  = SyncReadMem(params.dataSize, chiselTypeOf(i_peak.get.bits))
 
-        // Connect asyncScaler_x
-        asyncScaler_x.io.enq.valid := true.B
-        asyncScaler_x.io.enq.bits  := scaler_x
-        asyncScaler_x.io.enq_clock := clock
-        asyncScaler_x.io.enq_reset := reset.asBool()
-        scaler_x_out := asyncScaler_x.io.deq.bits
-        asyncScaler_x.io.deq.ready := true.B
-        asyncScaler_x.io.deq_clock := clock2
-        asyncScaler_x.io.deq_reset := reset2.asBool()
+                val cnt_1D = RegInit(0.U(log2Ceil(params.dataSize).W))
+                cnt_1D.suggestName("cnt_1D")
 
-        // Connect asyncFFT_scaler_y
-        asyncFFT_scaler_y.io.enq.valid := true.B
-        asyncFFT_scaler_y.io.enq.bits  := fft_scaler_y
-        asyncFFT_scaler_y.io.enq_clock := clock
-        asyncFFT_scaler_y.io.enq_reset := reset.asBool()
-        fft_scaler_y_out := asyncFFT_scaler_y.io.deq.bits
-        asyncFFT_scaler_y.io.deq.ready := true.B
-        asyncFFT_scaler_y.io.deq_clock := clock2
-        asyncFFT_scaler_y.io.deq_reset := reset2.asBool()
+                async_cut.get.io.deq.ready   := true.B
+                async_tresh.get.io.deq.ready := true.B
+                async_peak.get.io.deq.ready  := true.B
 
-        // Connect asyncFFT_scaler_x
-        asyncFFT_scaler_x.io.enq.valid := true.B
-        asyncFFT_scaler_x.io.enq.bits  := fft_scaler_x
-        asyncFFT_scaler_x.io.enq_clock := clock
-        asyncFFT_scaler_x.io.enq_reset := reset.asBool()
-        fft_scaler_x_out := asyncFFT_scaler_x.io.deq.bits
-        asyncFFT_scaler_x.io.deq.ready := true.B
-        asyncFFT_scaler_x.io.deq_clock := clock2
-        asyncFFT_scaler_x.io.deq_reset := reset2.asBool()
+                // FFT signal
+                when(async_cut.get.io.deq.fire()) {
+                    mem_cut(cnt_1D)   := async_cut.get.io.deq.bits
+                    mem_tresh(cnt_1D) := async_tresh.get.io.deq.bits
+                    mem_peak(cnt_1D)  := async_peak.get.io.deq.bits
+                    when ((cnt_1D === (params.dataSize-1).U) || async_cut.get.io.deq.bits.last){
+                        cnt_1D := 0.U
+                    }
+                    .otherwise {
+                        cnt_1D := cnt_1D + 1.U
+                    }
+                }
 
-        // Memories and counters
-        withClockAndReset(clock2, reset2) {
-            val mem0 = SyncReadMem(params.dataSize, params.proto0)
-            val mem1 = SyncReadMem(params.dataSize, params.proto0)
-            val mem2 = SyncReadMem(params.dataSize, params.proto1)
-            val mem3 = SyncReadMem(params.dataSize, params.proto1)
-            val mem4 = SyncReadMem(params.dataSize, params.proto2)
-
-            val counter0 = RegInit(0.U(log2Ceil(params.dataSize).W))
-            val counter2 = RegInit(0.U(log2Ceil(params.dataSize).W))
-            counter0.suggestName("counter0")
-            counter2.suggestName("counter2")
-
-            // FSM
-            object State extends ChiselEnum {
-                val sIdle, sWrite = Value
+                // Output data (read and write to the same address should never occur, hopefully)
+                o_cut.get.bits    := mem_cut(io.i_addr_x_1D.get)
+                o_tresh.get.bits  := mem_tresh(io.i_addr_x_1D.get)
+                o_peak.get.bits   := mem_peak(io.i_addr_x_1D.get)
+                o_cut.get.valid   := true.B
+                o_tresh.get.valid := true.B
+                o_peak.get.valid  := true.B
             }
-            val state0 = RegInit(State.sIdle)
-            val state2 = RegInit(State.sIdle)
-            state0.suggestName("state0")
-            state2.suggestName("state2")
+        }
+        if (params.fft_2D) {
+            // Connect async_scaler_x_2D
+            async_scaler_x_2D.get.io.enq.valid := true.B
+            async_scaler_x_2D.get.io.enq.bits  := io.i_scaler_x_2D.get
+            async_scaler_x_2D.get.io.enq_clock := clock
+            async_scaler_x_2D.get.io.enq_reset := reset.asBool()
+            io.o_scaler_x_2D.get := async_scaler_x_2D.get.io.deq.bits
+            async_scaler_x_2D.get.io.deq.ready := true.B
+            async_scaler_x_2D.get.io.deq_clock := io.clock2
+            async_scaler_x_2D.get.io.deq_reset := io.reset2.asBool()
 
-            asyncQueue0.io.deq.ready := true.B
-            asyncQueue1.io.deq.ready := true.B
-            asyncQueue2.io.deq.ready := true.B
-            asyncQueue3.io.deq.ready := true.B
-            asyncQueue4.io.deq.ready := true.B
+            async_doppler.get.io.enq  <> i_doppler.get
+            async_doppler.get.io.enq_clock := clock
+            async_doppler.get.io.enq_reset := reset.asBool()
 
-            val syncStart_delay = RegNext(syncStart, 0.U)
-
-            when(syncStart && (syncStart_delay === 0.U)) {
-                counter0 := 0.U
-            }
-            .elsewhen(asyncQueue0.io.deq.fire()){
-                mem0(counter0) := asyncQueue0.io.deq.bits.data.asTypeOf(params.proto0)
-                mem1(counter0) := asyncQueue1.io.deq.bits.data.asTypeOf(params.proto0)
-                counter0 := counter0 + 1.U
-            }
-            when (counter0 === (params.dataSize-1).U){
-                counter0 := 0.U
-            }
-
-            // FFT signal
-            when(syncStartFFT) {
-                counter2 := 0.U
-            }
-            .elsewhen(asyncQueue2.io.deq.fire()){
-                mem2(counter2) := asyncQueue2.io.deq.bits.data.asTypeOf(params.proto1)
-                mem3(counter2) := asyncQueue3.io.deq.bits.data.asTypeOf(params.proto1)
-                mem4(counter2) := asyncQueue4.io.deq.bits.data.asTypeOf(params.proto2)
-                counter2 := counter2 + 1.U
-            }
-            when (counter2 === (params.dataSize-1).U){
-                counter2 := 0.U
-            }
-
-            // Output data (read and write to the same address should never occur)
-            io.out0 := mem0(pixel_x)
-            io.out1 := mem1(pixel_x)
-            io.out2 := mem2(pixel_x_fft)
-            io.out3 := mem3(pixel_x_fft)
-            io.out4 := mem4(pixel_x_fft)
+            // Connect output reset and clock
+            o_doppler.get   <> async_doppler.get.io.deq
+            async_doppler.get.io.deq_clock := io.clock2
+            async_doppler.get.io.deq_reset := io.reset2.asBool()
         }
     }
 }
 
-trait AsyncLoggerStandaloneBlock extends AsyncLogger[FixedPoint] {
-    val ioInNode0 = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
-    val ioInNode1 = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
-    val ioInNode2 = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 3)))
-    val ioInNode3 = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 3)))
-    val ioInNode4 = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 1)))
+trait AsyncLoggerStandaloneBlock extends AsyncLogger {
+    // 1D processing
+    val in_node_cut   = if (node_cut   != None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))) else None
+    val in_node_tresh = if (node_tresh != None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))) else None
+    val in_node_peak  = if (node_peak  != None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 1)))) else None
+    val out_node_cut   = if (node_cut   != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val out_node_tresh = if (node_tresh != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val out_node_peak  = if (node_peak  != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
 
-    inRealNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioInNode0
-    inImagNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioInNode1
-    inCutNode  := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 3)) := ioInNode2
-    inTresholdNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 3)) := ioInNode3
-    inPeakNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 1)) := ioInNode4
+    if (node_cut   != None) { out_node_cut.get   := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_cut.get   := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := in_node_cut.get   }
+    if (node_tresh != None) { out_node_tresh.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_tresh.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := in_node_tresh.get }
+    if (node_peak  != None) { out_node_peak.get  := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_peak.get  := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 1)) := in_node_peak.get  }
 
-    val in0 = InModuleBody { ioInNode0.makeIO() }
-    val in1 = InModuleBody { ioInNode1.makeIO() }
-    val in2 = InModuleBody { ioInNode2.makeIO() }
-    val in3 = InModuleBody { ioInNode3.makeIO() }
-    val in4 = InModuleBody { ioInNode4.makeIO() }
+    val i_cut   = if (node_cut   != None) Some(InModuleBody { in_node_cut.get.makeIO()    }) else None
+    val i_tresh = if (node_tresh != None) Some(InModuleBody { in_node_tresh.get.makeIO()  }) else None
+    val i_peak  = if (node_peak  != None) Some(InModuleBody { in_node_peak.get.makeIO()   }) else None
+    val o_cut   = if (node_cut   != None) Some(InModuleBody { out_node_cut.get.makeIO()   }) else None
+    val o_tresh = if (node_tresh != None) Some(InModuleBody { out_node_tresh.get.makeIO() }) else None
+    val o_peak  = if (node_peak  != None) Some(InModuleBody { out_node_peak.get.makeIO()  }) else None
+
+    // 2D processing
+    val in_node_doppler  = if (node_doppler != None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))) else None
+    val out_node_doppler = if (node_doppler != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+
+    if (node_doppler != None) { out_node_doppler.get   := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_doppler.get   := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := in_node_doppler.get   }
+
+    val i_doppler   = if (node_doppler != None) Some(InModuleBody { in_node_doppler.get.makeIO()  }) else None
+    val o_doppler   = if (node_doppler != None) Some(InModuleBody { out_node_doppler.get.makeIO() }) else None
+}
+
+trait AsyncLoggerOutputPins extends AsyncLogger {
+    // 1D processing
+    val out_node_cut   = if (node_cut   != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val out_node_tresh = if (node_tresh != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val out_node_peak  = if (node_peak  != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+
+    if (node_cut   != None) { out_node_cut.get   := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_cut.get   }
+    if (node_tresh != None) { out_node_tresh.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_tresh.get }
+    if (node_peak  != None) { out_node_peak.get  := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_peak.get  }
+
+    val o_cut   = if (node_cut   != None) Some(InModuleBody { out_node_cut.get.makeIO()   }) else None
+    val o_tresh = if (node_tresh != None) Some(InModuleBody { out_node_tresh.get.makeIO() }) else None
+    val o_peak  = if (node_peak  != None) Some(InModuleBody { out_node_peak.get.makeIO()  }) else None
+
+    // // 2D processing
+    // val out_node_doppler = if (node_doppler != None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    // if (node_doppler != None) { out_node_doppler.get   := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := node_doppler.get }
+    // val o_doppler   = if (node_doppler != None) Some(InModuleBody { out_node_doppler.get.makeIO() }) else None
 }
 
 
 object AsyncLoggerApp extends App
 {
-  val params: AsyncLoggerParams[FixedPoint] = AsyncLoggerParams(
-    proto0    = FixedPoint(16.W, 10.BP),
-    proto1    = FixedPoint(16.W, 10.BP),
-    proto2    = FixedPoint( 8.W,  0.BP),
+  val params = AsyncLoggerParams(
+    fft_1D = true,
+    fft_2D = true,
+    s_width_1D = 4,
+    s_width_2D = 4,
     dataSize = 1024
   )
   implicit val p: Parameters = Parameters.empty
   
-  val lazyDut = LazyModule(new AsyncLogger(params, 4) with AsyncLoggerStandaloneBlock)
+  val lazyDut = LazyModule(new AsyncLogger(params) with AsyncLoggerStandaloneBlock)
   (new ChiselStage).execute(Array("--target-dir", "verilog/AsyncLogger"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

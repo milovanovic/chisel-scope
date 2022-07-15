@@ -6,35 +6,28 @@ import chisel3.util._
 import chisel3.experimental.FixedPoint
 
 import dsptools.numbers._
+import dspblocks._
 
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 
-import scala.math._
-
-// HDMIProcFFTNoInterpolation parameters
-case class HDMIProcFFTNoInterpolationParameters[T <: Data: Real: BinaryRepresentation] (
+// ProcFFT1D parameters
+case class ProcFFT1DParameters[T <: Data: Real: BinaryRepresentation] (
   flowControlParams   : FlowControlParams,
-  scalerParams        : ScalerParams,
+  scalerParams        : Scaler1DParams,
   interpolatorParams  : InterpolatorV2Params[T],
   interpolatorParams2 : InterpolatorV2Params[T],
   dataCounterParams   : DataCounterParams,
 )
 
-// HDMIProcFFTNoInterpolation Addresses
-case class HDMIProcFFTNoInterpolationAddresses (
-  scalerAddress0    : AddressSet,
-  scalerAddress1    : AddressSet,
-  scalerAddress2    : AddressSet,
-)
+class AXI4ProcFFT1D[T <: Data : Real: BinaryRepresentation](params: ProcFFT1DParameters[T], beatBytes: Int)(implicit p: Parameters) extends ProcFFT1D[T, AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params, beatBytes) with AXI4DspBlock {
+  override val mem = None
+}
 
-class HDMIProcFFTNoInterpolation[T <: Data: Real: BinaryRepresentation](params: HDMIProcFFTNoInterpolationParameters[T], address: HDMIProcFFTNoInterpolationAddresses, beatBytes: Int) extends LazyModule()(Parameters.empty) {
-
-  val scaler0       = LazyModule(new AXI4ScalerBlock(params.scalerParams, address.scalerAddress0, beatBytes = beatBytes))
-  val scaler1       = LazyModule(new AXI4ScalerBlock(params.scalerParams, address.scalerAddress1, beatBytes = beatBytes))
-  val scaler2       = LazyModule(new AXI4ScalerBlock(params.scalerParams, address.scalerAddress2, beatBytes = beatBytes))
+abstract class ProcFFT1D[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data](params: ProcFFT1DParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
+  // blocks
   val interpolator0 = LazyModule(new AXI4InterpolatorV2Block(params.interpolatorParams, beatBytes = beatBytes))
   val interpolator1 = LazyModule(new AXI4InterpolatorV2Block(params.interpolatorParams, beatBytes = beatBytes))
   // val interpolator2 = LazyModule(new AXI4InterpolatorV2Block(params.interpolatorParams2, beatBytes = beatBytes))
@@ -44,30 +37,22 @@ class HDMIProcFFTNoInterpolation[T <: Data: Real: BinaryRepresentation](params: 
   val flowcontrol   = LazyModule(new FlowControl(params.flowControlParams, beatBytes = beatBytes))
 
   val zohNode = AXI4StreamIdentityNode()
-  
 
-  // define mem
-  lazy val blocks = Seq(scaler0, scaler1, scaler2)
-  val bus = LazyModule(new AXI4Xbar)
-  val mem = Some(bus.node)
-  for (b <- blocks) {
-    b.mem.foreach { _ := AXI4Buffer() := bus.node }
-  }
+  // StreamNode
+  val streamNode = flowcontrol.inNode
 
   // connect nodes
-  datacounter0.streamNode := interpolator0.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := scaler0.streamNode := flowcontrol.outNode0
-  datacounter1.streamNode := interpolator1.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := scaler1.streamNode := flowcontrol.outNode1
-  datacounter2.streamNode := zohNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := scaler2.streamNode := flowcontrol.outNode2
+  datacounter0.streamNode := interpolator0.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode0
+  datacounter1.streamNode := interpolator1.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode1
+  datacounter2.streamNode := zohNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode2
 
   lazy val module = new LazyModuleImp(this) {
     // IOs
     val start    = IO(Input(Bool()))
-    val sync     = IO(Output(Bool()))
     val loadRegs = IO(Input(Bool()))
 
     val width = log2Ceil(params.scalerParams.scale)
-    val cut_scaler_y = IO(Output(UInt((width+1).W)))
-    val cut_scaler_x = IO(Output(UInt((width).W)))
+    val i_scaler_x = IO(Input((UInt((width+1).W))))
 
     // Registers
     val loadRegs_delayed   = RegNext(loadRegs, false.B)
@@ -80,7 +65,7 @@ class HDMIProcFFTNoInterpolation[T <: Data: Real: BinaryRepresentation](params: 
     // Zero order hold for peak
     val zoh = Module(new ZeroOrderHold(params.interpolatorParams2.zoh, params.interpolatorParams2.scalerSize, 4))
     zoh.io.loadReg   := loadRegs && (loadRegs_delayed === false.B)
-    zoh.io.scaler    := scaler2.module.scalerX
+    zoh.io.scaler    := i_scaler_x
     zin.ready        := zoh.io.in.ready
     zoh.io.in.valid  := zin.valid
     zoh.io.in.bits   := zin.bits.data.asTypeOf(params.interpolatorParams2.zoh.proto)
@@ -88,40 +73,27 @@ class HDMIProcFFTNoInterpolation[T <: Data: Real: BinaryRepresentation](params: 
     zout.bits.data   := zoh.io.out.bits.asUInt
     zoh.io.out.ready := zout.ready
 
-    cut_scaler_y := scaler0.module.scalerY
-    cut_scaler_x := scaler0.module.scalerX
-
-    interpolator0.module.scaler  := scaler0.module.scalerX
+    interpolator0.module.scaler  := i_scaler_x
     interpolator0.module.loadReg := loadRegs && (loadRegs_delayed === false.B)
-    interpolator1.module.scaler  := scaler1.module.scalerX
+    interpolator1.module.scaler  := i_scaler_x
     interpolator1.module.loadReg := loadRegs && (loadRegs_delayed === false.B)
     // interpolator2.module.scaler  := scaler2.module.scalerX
     // interpolator2.module.loadReg := loadRegs && (loadRegs_delayed === false.B)
 
-    datacounter0.module.scaler := scaler0.module.scalerX
-    datacounter1.module.scaler := scaler1.module.scalerX
-    datacounter2.module.scaler := scaler2.module.scalerX
+    datacounter0.module.scaler := i_scaler_x
+    datacounter1.module.scaler := i_scaler_x
+    datacounter2.module.scaler := i_scaler_x
 
     datacounter0.module.start := flowcontrol.module.sync
     datacounter1.module.start := flowcontrol.module.sync
     datacounter2.module.start := flowcontrol.module.sync
 
     flowcontrol.module.start := start && (start_delayed === false.B)
-    sync := flowcontrol.module.sync
   }
 }
 
-trait HDMIProcFFTNoInterpolationPins extends HDMIProcFFTNoInterpolation[FixedPoint] {
+trait AXI4ProcFFT1DPins extends AXI4ProcFFT1D[FixedPoint] {
   def beatBytes: Int = 4
-
-  // Generate AXI4 slave output
-  def standaloneParams = AXI4BundleParameters(addrBits = beatBytes*8, dataBits = beatBytes*8, idBits = 1)
-  val ioMem = mem.map { m => {
-    val ioMemNode = BundleBridgeSource(() => AXI4Bundle(standaloneParams))
-    m := BundleBridgeToAXI4(AXI4MasterPortParameters(Seq(AXI4MasterParameters("bundleBridgeToAXI4")))) := ioMemNode
-    val ioMem = InModuleBody { ioMemNode.makeIO() }
-    ioMem
-  }}
 
   {
     implicit val valName = ValName(s"out_0")
@@ -144,19 +116,18 @@ trait HDMIProcFFTNoInterpolationPins extends HDMIProcFFTNoInterpolation[FixedPoi
   {
     implicit val valName = ValName(s"in")
     val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 8)))
-    flowcontrol.inNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 8)) := ioInNode
+    streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 8)) := ioInNode
     val in0 = InModuleBody { ioInNode.makeIO() }
   }
 }
 
-class HDMIProcFFTNoInterpolationParams(fftSize: Int = 1024) {
-  val params : HDMIProcFFTNoInterpolationParameters[FixedPoint] = HDMIProcFFTNoInterpolationParameters (
+class ProcFFT1DParams(fftSize: Int = 1024) {
+  val params : ProcFFT1DParameters[FixedPoint] = ProcFFT1DParameters (
     flowControlParams = FlowControlParams(
       dataSize = fftSize
     ),
-    scalerParams = ScalerParams(
-      scale   = log2Ceil(128),
-      complex = false
+    scalerParams = Scaler1DParams(
+      scale   = log2Ceil(128)
     ),
     interpolatorParams = InterpolatorV2Params(
       proto = FixedPoint(16.W, 10.BP),
@@ -181,20 +152,13 @@ class HDMIProcFFTNoInterpolationParams(fftSize: Int = 1024) {
   )
 }
 
-class HDMIProcFFTNoInterpolationAddr(startAddress: BigInt = 0x0000) {
-  val addresses : HDMIProcFFTNoInterpolationAddresses = HDMIProcFFTNoInterpolationAddresses (
-    scalerAddress0    = AddressSet(startAddress + 0x000, 0xFF),
-    scalerAddress1    = AddressSet(startAddress + 0x100, 0xFF),
-    scalerAddress2    = AddressSet(startAddress + 0x200, 0xFF),
-  )
-}
-
-object HDMIProcFFTNoInterpolationApp extends App
+object ProcFFT1DApp extends App
 {
-  val params = (new HDMIProcFFTNoInterpolationParams).params
-  val address = (new HDMIProcFFTNoInterpolationAddr(0x0000)).addresses
-  val lazyDut = LazyModule(new HDMIProcFFTNoInterpolation(params, address, 4) with HDMIProcFFTNoInterpolationPins)
+  implicit val p: Parameters = Parameters.empty
 
-  (new ChiselStage).execute(Array("--target-dir", "verilog/HDMIProcFFTNoInterpolation"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+  val params = (new ProcFFT1DParams).params
+  val lazyDut = LazyModule(new AXI4ProcFFT1D(params, 4) with AXI4ProcFFT1DPins)
+
+  (new ChiselStage).execute(Array("--target-dir", "verilog/ProcFFT1D"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 
