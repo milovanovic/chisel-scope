@@ -28,14 +28,9 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
 
         val start = IO(Input(Bool()))
         val sync  = IO(Output(Bool()))
-
-        // Signal definitions
-        val read  = in.fire()
         
         // Registers
-        val r_trig = RegInit(false.B)
-        val r_cnt_stop = RegInit(0.U(32.W))
-        val r_counter  = RegInit(0.U(log2Ceil(params.dataSize).W))
+        val r_counter = RegInit(0.U(log2Ceil(params.dataSize).W))
 
         // Signals
         val cut      = in.bits.data(26,11)
@@ -44,9 +39,12 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
 
         // FSM
         object State extends ChiselEnum {
-            val sInit, sActive = Value
+            val sInit, sWait, sActive = Value
         }
         val state = RegInit(State.sInit)
+        dontTouch(state)
+        dontTouch(r_counter)
+        dontTouch(in)
 
         sync := start
 
@@ -61,12 +59,10 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
         out2.bits.data := peak
         out2.bits.last := in.bits.last
 
-        // increment data r_cnt_stop
-        when(read === 0.U) {
-            r_cnt_stop := r_cnt_stop + 1.U
-        }
-        .otherwise {
-          r_cnt_stop := 0.U
+        // count data
+        when(in.fire()) {
+            when((r_counter === (params.dataSize -1).U) || in.bits.last) {r_counter := 0.U }
+            .otherwise {r_counter := r_counter + 1.U}
         }
 
         when (state === State.sInit) {
@@ -75,15 +71,12 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
             out1.valid := false.B
             out2.valid := false.B
             when(start) {
-              r_trig := true.B
+              state := State.sWait
             }
-            // State select 
-            when (r_trig === 1.U && r_cnt_stop > 20.U) {
-                state := State.sActive
-                r_trig := false.B
-            }
-            .otherwise {
-                state := State.sInit
+        }
+        .elsewhen(state === State.sWait) {
+            when(in.fire() && ((r_counter === (params.dataSize -1).U) || in.bits.last)) {
+              state := State.sActive
             }
         }
         .elsewhen(state === State.sActive) {
@@ -92,14 +85,8 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
             out1.valid := in.valid
             out2.valid := in.valid
             
-            // count data
-             when(read) {
-                r_counter  := r_counter + 1.U
-            }
-
-            // State select 
-            when (read & r_counter === (params.dataSize-1).U) {
-                state := State.sInit
+            when(in.fire() && ((r_counter === (params.dataSize -1).U) || in.bits.last)) {
+              state := State.sInit
             }
         }
         .otherwise {
