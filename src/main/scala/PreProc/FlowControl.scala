@@ -61,7 +61,7 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
 
         // count data
         when(in.fire()) {
-            when((r_counter === (params.dataSize -1).U) || in.bits.last) {r_counter := 0.U }
+            when((r_counter === (params.dataSize - 1).U) || in.bits.last) {r_counter := 0.U }
             .otherwise {r_counter := r_counter + 1.U}
         }
 
@@ -75,7 +75,7 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
             }
         }
         .elsewhen(state === State.sWait) {
-            when(in.fire() && ((r_counter === (params.dataSize -1).U) || in.bits.last)) {
+            when(in.fire() && ((r_counter === (params.dataSize - 1).U) || in.bits.last)) {
               state := State.sActive
             }
         }
@@ -85,7 +85,7 @@ class FlowControl(params: FlowControlParams, beatBytes: Int) extends LazyModule(
             out1.valid := in.valid
             out2.valid := in.valid
             
-            when(in.fire() && ((r_counter === (params.dataSize -1).U) || in.bits.last)) {
+            when(in.fire() && ((r_counter === (params.dataSize - 1).U) || in.bits.last)) {
               state := State.sInit
             }
         }

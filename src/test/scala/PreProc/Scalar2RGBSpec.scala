@@ -10,13 +10,13 @@ import dsptools.numbers._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 
-import org.scalatest.flatspec.AnyFlatSpec
-import org.scalatest.matchers.should.Matchers
+import org.scalatest.FlatSpec
+import org.scalatest.Matchers
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // SPEC
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-class Scaler2RGBSpec extends AnyFlatSpec with Matchers {
+class Scaler2RGBSpec extends FlatSpec with Matchers {
   implicit val p: Parameters = Parameters.empty
 
   //-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
