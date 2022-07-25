@@ -68,7 +68,7 @@ class FrameBufferIO[T <: Data: Real](val params: FrameBufferParameters[T], val s
     // Load scaler
     val loadScaler = Output(Bool())
     // X_location
-    val i_addr_x_1D = Output(UInt(16.W))
+    val o_addr_x_1D = Output(UInt(9.W))
     // Input FFT 1D data
     val i_CUT       = Input(params.proto1)
     val i_Treshold  = Input(params.proto1)
@@ -155,7 +155,7 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     val i_FFT_2D = RegInit(0.U(24.W))
     i_FFT_2D := io.i_FFT_2D
 
-    when (io.i_addr_x_1D < (x_end - x_start).U) {
+    when (io.o_addr_x_1D < (x_end - x_start).U) {
         inTreshold_delayed := i_Treshold
     }
 
@@ -208,11 +208,11 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     signal_peak_cond_2 := ((y_end_1D).U - pixel_y).asTypeOf(params.proto1)
 
     // relative location of coordinate X
-    when ((pixel_x > x_start_sig) && (pixel_x < x_end_sig)) {
-        io.i_addr_x_1D := (pixel_x - x_start_sig)
+    when ((pixel_x >= x_start_sig) && (pixel_x < x_end_sig)) {
+        io.o_addr_x_1D := w_temp_addrx(9,1)
     }
     .otherwise {
-        io.i_addr_x_1D := 0.U
+        io.o_addr_x_1D := 0.U
     }
 
     // FFT 1D signal condition
@@ -290,8 +290,8 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     // Generate start signal
     when (video_active) {
         // Start
-        when((pixel_y === 0.U) && (pixel_x < x_start)) {
-            io.start     := true.B
+        when((pixel_x >= x_start_sig) && (pixel_x < x_end_sig)) {
+            io.start := true.B
         }
         .otherwise {
             io.start := false.B

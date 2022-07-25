@@ -15,7 +15,7 @@ import freechips.rocketchip.diplomacy._
 
 // Proc1D parameters
 case class Proc1DParameters[T <: Data: Real: BinaryRepresentation] (
-  flowControlParams   : FlowControlParams,
+  dataSplitterParams  : FFTDataSplitterParams,
   interpolatorParams  : InterpolationParams[T],
   interpolatorParams2 : InterpolationParams[T]
 )
@@ -29,19 +29,21 @@ abstract class Proc1D[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: D
   val interpolator0 = LazyModule(new AXI4InterpolationBlock(params.interpolatorParams, beatBytes = beatBytes))
   val interpolator1 = LazyModule(new AXI4InterpolationBlock(params.interpolatorParams, beatBytes = beatBytes))
   val interpolator2 = LazyModule(new AXI4InterpolationBlock(params.interpolatorParams2, beatBytes = beatBytes))
-  val flowcontrol   = LazyModule(new FlowControl(params.flowControlParams, beatBytes = beatBytes))
+  val datasplit     = LazyModule(new FFTDataSplitter(params.dataSplitterParams, beatBytes = beatBytes))
 
   // StreamNode
-  val streamNode = flowcontrol.inNode
+  val streamNode = datasplit.inNode
 
   // connect nodes
-  interpolator0.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode0
-  interpolator1.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode1
-  interpolator2.streamNode := AXI4StreamBuffer(BufferParams(depth = params.flowControlParams.dataSize)) := flowcontrol.outNode2
+  interpolator0.streamNode := datasplit.outNode0
+  interpolator1.streamNode := datasplit.outNode1
+  interpolator2.streamNode := datasplit.outNode2
 
   lazy val module = new LazyModuleImp(this) {
     // IOs
-    val start    = IO(Input(Bool()))
+    val read_1D  = IO(Input(Bool()))
+    val i_addr_x = IO(Input(UInt(log2Ceil(params.dataSplitterParams.dataSize).W)))
+    dontTouch(i_addr_x)
     val loadRegs = IO(Input(Bool()))
 
     val width = log2Ceil(params.interpolatorParams.scalerSize)
@@ -49,7 +51,6 @@ abstract class Proc1D[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: D
 
     // Registers
     val loadRegs_delayed   = RegNext(loadRegs, false.B)
-    val start_delayed      = RegNext(start, false.B)
 
     interpolator0.module.scaler  := i_scaler_x
     interpolator0.module.loadReg := loadRegs && (loadRegs_delayed === false.B)
@@ -58,7 +59,9 @@ abstract class Proc1D[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: D
     interpolator2.module.scaler  := i_scaler_x
     interpolator2.module.loadReg := loadRegs && (loadRegs_delayed === false.B)
 
-    flowcontrol.module.start := start && (start_delayed === false.B)
+    // Start and address for data splitter
+    datasplit.module.read := read_1D
+    datasplit.module.i_addr_x := i_addr_x
   }
 }
 
@@ -83,9 +86,23 @@ trait AXI4Proc1DPins extends AXI4Proc1D[FixedPoint] {
   val in0 = InModuleBody { ioInNode.makeIO() }
 }
 
+trait AXI4Proc1DOutputPins extends AXI4Proc1D[FixedPoint] {
+  val ioOutNode0 = BundleBridgeSink[AXI4StreamBundle]()
+  ioOutNode0 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator0.streamNode
+  val out0 = InModuleBody { ioOutNode0.makeIO() }
+
+  val ioOutNode1 = BundleBridgeSink[AXI4StreamBundle]()
+  ioOutNode1 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator1.streamNode
+  val out1 = InModuleBody { ioOutNode1.makeIO() }
+
+  val ioOutNode2 = BundleBridgeSink[AXI4StreamBundle]()
+  ioOutNode2 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator2.streamNode
+  val out2 = InModuleBody { ioOutNode2.makeIO() }
+}
+
 class Proc1DParams(fftSize: Int = 1024) {
   val params : Proc1DParameters[FixedPoint] = Proc1DParameters (
-    flowControlParams = FlowControlParams(
+    dataSplitterParams = FFTDataSplitterParams(
       dataSize = fftSize
     ),
     interpolatorParams = InterpolationParams(
@@ -116,4 +133,3 @@ object Proc1DApp extends App
 
   (new ChiselStage).execute(Array("--target-dir", "verilog/Proc1D"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
-

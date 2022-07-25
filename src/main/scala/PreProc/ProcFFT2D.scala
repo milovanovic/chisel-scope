@@ -64,7 +64,7 @@ abstract class ProcFFT2D[D, U, E, O, B <: Data] (params: ProcFFT2DParams, beatBy
         if (params.pipe) io.o_data := RegNext(s2rgb.ioBlock.o_data, 0.U)
         else io.o_data := s2rgb.ioBlock.o_data
         
-        // // Data scaler
+        // Data scaler
         s2rgb.ioBlock.i_max := io.i_scaler_data
     }
 }

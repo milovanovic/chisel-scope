@@ -17,7 +17,7 @@ import hdmi.preproc._
 
 /* 1D processing parameters and addresses */
 case class Proc1DParamsAndAddresses[T <: Data: Real: BinaryRepresentation] (
-  procParams  : ProcFFT1DParameters[T]
+  procParams  : Proc1DParameters[T]
 )
 /* 1D processing scaler parameters and addresses */
 case class Scaler1DParamsAndAddresses (
@@ -37,7 +37,7 @@ case class Scaler2DParamsAndAddresses (
 
 /* AsyncQueue parameters and addresses */
 case class AsyncParamsAndAddresses (
-  asyncParams : AsyncLoggerParams
+  asyncParams : AsyncScopeQueueParams
 )
 
 // Scope parameters
@@ -74,22 +74,30 @@ class AXI4Scope[T <: Data : Real: BinaryRepresentation](params: ScopeParameters[
 
 abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: ScopeParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
-  val proc1D   = LazyModule(new AXI4ProcFFT1D(params.proc1DParams.procParams, beatBytes))
+  val proc1D   = LazyModule(new AXI4Proc1D(params.proc1DParams.procParams, beatBytes){
+    val ioOutNode0 = BundleBridgeSink[AXI4StreamBundle]()
+    ioOutNode0 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator0.streamNode
+    val out0 = InModuleBody { ioOutNode0.makeIO() }
+
+    val ioOutNode1 = BundleBridgeSink[AXI4StreamBundle]()
+    ioOutNode1 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator1.streamNode
+    val out1 = InModuleBody { ioOutNode1.makeIO() }
+
+    val ioOutNode2 = BundleBridgeSink[AXI4StreamBundle]()
+    ioOutNode2 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator2.streamNode
+    val out2 = InModuleBody { ioOutNode2.makeIO() }
+  })
   val scaler1D = LazyModule(new AXI4Scaler1DBlock(params.scaler1DParams.scalerParams, params.scaler1DParams.scalerAddress, beatBytes))
   val proc2D   = LazyModule(new AXI4ProcFFT2D(params.proc2DParams.procParams, 2))
   val scaler2D = LazyModule(new AXI4Scaler2DBlock(params.scaler2DParams.scalerAddress, beatBytes))
-  val asyncQ   = LazyModule(new AsyncLogger(params.asyncParams.asyncParams) with AsyncLoggerOutputPins)
+  val asyncQ   = LazyModule(new AsyncScopeQueue(params.asyncParams.asyncParams))
 
   val streamNode  = scaler1D.streamNode
   val streamNode2 = asyncQ.node_doppler.get
   // 1D connect nodes
-  proc1D.flowcontrol.inNode := streamNode
-  asyncQ.node_cut.get   := proc1D.datacounter0.streamNode
-  asyncQ.node_tresh.get := proc1D.datacounter1.streamNode
-  asyncQ.node_peak.get  := proc1D.datacounter2.streamNode
-
+  proc1D.streamNode := asyncQ.node_range.get := scaler1D.streamNode
   // 2D connect nodes
-  proc2D.streamNode := streamNode2
+  proc2D.streamNode := asyncQ.node_doppler.get
 
   lazy val module = new LazyModuleImp(this) {
       // IO
@@ -127,22 +135,25 @@ abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Da
       io.data_p := rgb2tmds.data_p
       io.data_n := rgb2tmds.data_n
 
+      // Clock and reset for processing blocks
+      proc1D.module.clock := io.clk_pixel
+      proc1D.module.reset := io.reset_hdmi
+      proc2D.module.clock := io.clk_pixel
+      proc2D.module.reset := io.reset_hdmi
+
       withClockAndReset(io.clk_pixel, io.reset_hdmi){
         val frameBuffer = Module(new FrameBuffer(params.frameParams, log2Ceil(128)))
 
-        proc1D.module.start     := frameBuffer.io.start
-        proc1D.module.loadRegs  := frameBuffer.io.loadScaler
-        proc1D.module.i_scaler_x := scaler1D.module.scalerX
+        proc1D.module.read_1D    := frameBuffer.io.start
+        proc1D.module.loadRegs   := frameBuffer.io.loadScaler
+        proc1D.module.i_scaler_x := asyncQ.module.io.o_scaler_x_1D.get
+        proc1D.module.i_addr_x   := frameBuffer.io.o_addr_x_1D
 
         // async
         asyncQ.module.io.clock2 := io.clk_pixel
         asyncQ.module.io.reset2 := io.reset_hdmi
-        asyncQ.module.io.i_addr_x_1D.get   := frameBuffer.io.i_addr_x_1D
         asyncQ.module.io.i_scaler_y_1D.get := scaler1D.module.scalerY
         asyncQ.module.io.i_scaler_x_1D.get := scaler1D.module.scalerX
-        frameBuffer.io.i_CUT      := asyncQ.o_cut.get.bits.data.asTypeOf(frameBuffer.io.i_CUT)
-        frameBuffer.io.i_Treshold := asyncQ.o_tresh.get.bits.data.asTypeOf(frameBuffer.io.i_Treshold)
-        frameBuffer.io.i_Peak     := asyncQ.o_peak.get.bits.data.asTypeOf(frameBuffer.io.i_Peak)
         // 2D
         if (params.proc2DParams.procParams.memParams.divideMem) {
           proc2D.module.io.i_addr_x.get := frameBuffer.io.o_addr_x_2D
@@ -151,11 +162,16 @@ abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Da
         else {
           proc2D.module.io.i_addr_x.get := Cat(frameBuffer.io.o_addr_y_2D, frameBuffer.io.o_addr_x_2D)
         }
-        proc2D.module.io.i_scaler_data := scaler2D.module.io.o_scalerData
-        frameBuffer.io.i_scaler := scaler2D.module.io.o_scalerAxis
         frameBuffer.io.i_FFT_2D := proc2D.module.io.o_data
-        
+        asyncQ.module.io.i_scaler_x_2D.get := scaler2D.module.io.o_scalerAxis
+        frameBuffer.io.i_scaler := asyncQ.module.io.o_scaler_x_2D.get
+        asyncQ.module.io.i_scaler_y_2D.get := scaler2D.module.io.o_scalerData
+        proc2D.module.io.i_scaler_data := asyncQ.module.io.o_scaler_y_2D.get
+
         // frameBuffer
+        frameBuffer.io.i_CUT        := proc1D.out0.bits.data.asTypeOf(frameBuffer.io.i_CUT)
+        frameBuffer.io.i_Treshold   := proc1D.out1.bits.data.asTypeOf(frameBuffer.io.i_Treshold)
+        frameBuffer.io.i_Peak       := proc1D.out2.bits.data.asTypeOf(frameBuffer.io.i_Peak)
         frameBuffer.clock           := io.clk_pixel
         frameBuffer.reset           := io.reset_hdmi
         frameBuffer.io.pixel_x      := pixel_x
@@ -190,7 +206,7 @@ trait AXI4ScopePins extends AXI4Scope[FixedPoint] {
 class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000) {
   val params : ScopeParameters[FixedPoint] = ScopeParameters(
     proc1DParams = Proc1DParamsAndAddresses(
-      procParams = (new ProcFFT1DParams(rangeSize)).params
+      procParams = (new Proc1DParams(rangeSize)).params
     ),
     scaler1DParams = Scaler1DParamsAndAddresses(
       scalerParams = Scaler1DParams(
@@ -213,7 +229,7 @@ class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: Bi
       scalerAddress = AddressSet(startAddress + 0x0100, 0xFF)
     ),
     asyncParams = AsyncParamsAndAddresses(
-      asyncParams = AsyncLoggerParams(
+      asyncParams = AsyncScopeQueueParams(
         fft_1D = true,
         fft_2D = true,
         s_width_1D = log2Ceil(128),
