@@ -22,16 +22,19 @@ class InterpolationSpec extends FlatSpec with Matchers {
   //-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   it should "test Interpolation functionality" in {
     val params: InterpolationParams[FixedPoint] = InterpolationParams(
-      proto      = FixedPoint(16.W, 14.BP),
-      scalerSize = 7,
-      zoh        = ZOHParams(
+      proto = FixedPoint(16.W, 14.BP),
+      scalerSize = 4,
+      zoh = ZOHParams(
         width = 16,
         size  = 1
       )
     )
-    val lazyDut = LazyModule(new AXI4InterpolationBlock(params, 3) with AXI4InterpolationStandaloneBlock)
+    val dataSize = 100 // Data size
+    val tol   = 1      // tolerance
+    val scale = 0      // scale factor
+    val lazyDut = LazyModule(new AXI4InterpolationBlock(params) with AXI4InterpolationStandaloneBlock)
     dsptools.Driver.execute(() => lazyDut.module, Array("--backend-name", "verilator", "--target-dir", "test_run_dir/Oscillator/interpolator", "--top-name", "Interpolation")) {
-      c => new InterpolationTester(lazyDut, params, true)
+      c => new InterpolationTester(lazyDut, params, dataSize, tol, scale, true)
     } should be (true)
   }
 }

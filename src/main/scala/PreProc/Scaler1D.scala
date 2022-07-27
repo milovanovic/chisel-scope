@@ -28,7 +28,7 @@ abstract class Scaler1D [D, U, E, O, B <: Data] (params: Scaler1DParams, beatByt
         val (in, _)  = streamNode.in(0)
         val (out, _) = streamNode.out(0)
 
-        val width = log2Ceil(params.scale)
+        val width = params.scale
         val scaleYReg = RegInit((1 << width).U((width+1).W))
         val scaleXReg = RegInit(0.U((width).W))
 

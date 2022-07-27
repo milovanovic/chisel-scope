@@ -24,7 +24,7 @@ abstract class Scaler2D(beatBytes: Int) extends LazyModule()(Parameters.empty) w
         val io = IO(new Scaler2DIO)
 
         // Control registers
-        val r_scaleData = RegInit(0.U(5.W))
+        val r_scaleData = RegInit(9.U(5.W))
         val r_scaleAxis = RegInit(0.U(10.W))
         io.o_scalerData := r_scaleData
         io.o_scalerAxis := r_scaleAxis

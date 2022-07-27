@@ -74,7 +74,7 @@ class AXI4Scope[T <: Data : Real: BinaryRepresentation](params: ScopeParameters[
 
 abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: ScopeParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
-  val proc1D   = LazyModule(new AXI4Proc1D(params.proc1DParams.procParams, beatBytes){
+  val proc1D   = LazyModule(new AXI4Proc1D(params.proc1DParams.procParams){
     val ioOutNode0 = BundleBridgeSink[AXI4StreamBundle]()
     ioOutNode0 := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := interpolator0.streamNode
     val out0 = InModuleBody { ioOutNode0.makeIO() }
@@ -145,7 +145,6 @@ abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Da
         val frameBuffer = Module(new FrameBuffer(params.frameParams, log2Ceil(128)))
 
         proc1D.module.read_1D    := frameBuffer.io.start
-        proc1D.module.loadRegs   := frameBuffer.io.loadScaler
         proc1D.module.i_scaler_x := asyncQ.module.io.o_scaler_x_1D.get
         proc1D.module.i_addr_x   := frameBuffer.io.o_addr_x_1D
 
@@ -203,14 +202,14 @@ trait AXI4ScopePins extends AXI4Scope[FixedPoint] {
 }
 
 
-class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000) {
+class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000, scale_x: Int = 4) {
   val params : ScopeParameters[FixedPoint] = ScopeParameters(
     proc1DParams = Proc1DParamsAndAddresses(
-      procParams = (new Proc1DParams(rangeSize)).params
+      procParams = (new Proc1DParams(rangeSize, scale_x)).params
     ),
     scaler1DParams = Scaler1DParamsAndAddresses(
       scalerParams = Scaler1DParams(
-        scale = log2Ceil(128),
+        scale = scale_x,
       ),
       scalerAddress = AddressSet(startAddress + 0x0000, 0xFF)
     ),
@@ -232,8 +231,8 @@ class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: Bi
       asyncParams = AsyncScopeQueueParams(
         fft_1D = true,
         fft_2D = true,
-        s_width_1D = log2Ceil(128),
-        s_width_2D = log2Ceil(128),
+        s_width_1D = scale_x,
+        s_width_2D = scale_x,
         dataSize = rangeSize
       )
     ),

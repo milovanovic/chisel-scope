@@ -12,70 +12,82 @@ case class ZOHParams(
 )
 
 // ZOH IO
-class ZOHIO (val dataWidth: Int, val scalerSize: Int, val beatBytes: Int) extends Bundle {
-  val i_data  = Input(UInt(dataWidth.W))
-  val i_ready = Output(Bool())
-  val i_valid = Input(Bool())
-  val o_data  = Output(UInt(dataWidth.W))
-  val scaler  = Input(UInt(log2Ceil(scalerSize).W))
-  val loadReg = Input(Bool())
+class ZOHIO (val dataWidth: Int, val scalerSize: Int) extends Bundle {
+  val start  = Input(Bool())
+  val i_data = Input(UInt(dataWidth.W))
+  val o_data = Output(UInt(dataWidth.W))
+  val scaler = Input(UInt(scalerSize.W))
 }
 
 object ZOHIO {
-  def apply(dataWidth: Int, scalerSize: Int, beatBytes: Int): ZOHIO = new ZOHIO(dataWidth, scalerSize, beatBytes)
+  def apply(dataWidth: Int, scalerSize: Int): ZOHIO = new ZOHIO(dataWidth, scalerSize)
 }
 
-class ZOH (val params: ZOHParams, scalerSize: Int, beatBytes: Int) extends Module {
- val io =  IO(ZOHIO(params.width, scalerSize, beatBytes))
+class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
+ val io =  IO(ZOHIO(params.width, scalerSize))
 
   // Signal definitions
   val hold      = RegInit(0.U((params.width).W))
   val counter   = RegInit(0.U((log2Ceil(params.size) + scalerSize + 1).W))
-  val scalerReg = RegInit(0.U(log2Ceil(scalerSize).W))
-  val read      = io.i_ready && io.i_valid
-  val readyReg  = RegInit(false.B)
+  val scalerReg = RegInit(0.U(scalerSize.W))
+  val r_start   = RegNext(RegNext(io.start, false.B), false.B)
 
   // FSM
   object State extends ChiselEnum {
     val sIdle, sRead, sWrite = Value
   }
   val state = RegInit(State.sIdle)
-  io.o_data  := hold
-  io.i_ready := readyReg
+  scalerReg := io.scaler
 
-  // Read scaler register
+  // FSM
   when (state === State.sIdle) {
-    scalerReg := io.scaler
-    readyReg  := false.B
+    io.o_data := 0.U
     counter   := 0.U
-    state     := State.sRead
+    when(io.start) {state := State.sRead}
   }
-  // Read input data
   .elsewhen (state === State.sRead) {
-    readyReg    := true.B
-    when(read) {
+    when(r_start) {
       io.o_data := io.i_data
-      hold     := io.i_data
-      state    := State.sWrite
-      readyReg := false.B
-      counter := counter + 1.U
-    }
-  }
-  .elsewhen(state === State.sWrite){
-    // counter increment
-    when(counter === (params.size.U << scalerReg) - 1.U) {
-      readyReg := true.B
-      counter  := 0.U
-      state := State.sRead
+      hold      := io.i_data
+      state     := State.sWrite
+      counter   := counter + 1.U
     }
     .otherwise {
-      counter := counter + 1.U
+      io.o_data := io.i_data
+      hold      := io.i_data
+      counter   := 0.U
+      state     := State.sIdle
+    }
+    
+  }
+  .elsewhen (state === State.sWrite){
+    io.o_data := hold
+    // counter increment
+    when (scalerReg === 0.U && params.size.U === 1.U) {
+      when(counter === (params.size.U << scalerReg)) {
+        counter := 0.U
+        when(r_start) { state := State.sRead }
+        .otherwise    { state := State.sIdle }
+      }
+      .otherwise {
+        counter := counter + 1.U
+      }
+    }
+    .otherwise {
+      when(counter === (params.size.U << scalerReg) - 1.U) {
+        counter := 0.U
+        when(r_start) { state := State.sRead }
+        .otherwise    { state := State.sIdle }
+      }
+      .otherwise {
+        counter := counter + 1.U
+      }
     }
   }
   .otherwise {
-    readyReg := false.B
-    state    := State.sIdle
-    counter  := 0.U
+    io.o_data := io.i_data
+    state     := State.sIdle
+    counter   := 0.U
   }
 }
 
@@ -85,5 +97,5 @@ object ZOHApp extends App
     width = 16,
     size  = 4
   )
-  (new ChiselStage).execute(Array("--target-dir", "verilog/ZOH"), Seq(ChiselGeneratorAnnotation(() => new ZOH(params, 7, 4))))
+  (new ChiselStage).execute(Array("--target-dir", "verilog/ZOH"), Seq(ChiselGeneratorAnnotation(() => new ZOH(params, 7))))
 }

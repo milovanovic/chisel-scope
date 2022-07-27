@@ -112,9 +112,10 @@ object Utils {
 
   // interpolation model
   def interpolatedSeq(c: Seq[Int], zeroOrderHold: Int): Seq[Int] = {
+    val hold = if (zeroOrderHold == 1) 2 else zeroOrderHold
     var u = Seq[Int]()
     for (i <- 0 until c.size){
-      for (j <- 0 until zeroOrderHold) {
+      for (j <- 0 until hold) {
         if (i == 0) { 
           u = u :+ c(0)
         }
@@ -134,7 +135,7 @@ object Utils {
     }
     var out = Seq[Int]()
     for (i <- 0 until y.size) {
-      out = out :+ y(i)/zeroOrderHold
+      out = out :+ y(i)/hold
     }
     out
   }
@@ -277,7 +278,24 @@ object Utils {
     p.ylabel = "Amplitude"
     f.saveas(s"test_run_dir/" + fileName)
   }
+  def plot_data_double(inputData: Seq[Double], plotName: String, fileName: String): Unit = {
+
+    val f = Figure()
+    val p = f.subplot(0)
+    p.legend_=(true)
   
+    val data = inputData.toSeq
+    val xaxis = (0 until data.length).map(e => e.toDouble).toSeq.toArray
+    
+    p += plot(xaxis, data.toArray, name = plotName)
+   
+    p.ylim(data.min, data.max)
+    p.title_=(plotName + s" ${inputData.length}")
+
+    p.xlabel = "Time Bins"
+    p.ylabel = "Amplitude"
+    f.saveas(s"test_run_dir/" + fileName)
+  }
   def plot_fft(inputData: Seq[Long], plotName: String, fileName: String): Unit = {
 
     val f = Figure()

@@ -122,13 +122,15 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     val div_y_2D      = params.imageParams.div_y_2D
     val div_size_y_2D = params.imageParams.div_size_y_2D
     
-    val x_start_sig = offset_left
-    val x_end_sig   = offset_left + div_x*div_size_x
-    val x_start     = offset_left - axis_size/2
-    val x_end       = offset_left + div_x*div_size_x + axis_size/2
+    val x_start_sig  = offset_left
+    val x_start_addr = x_start_sig - 2.U
+    val x_end_sig    = offset_left + div_x*div_size_x
+    val x_end_addr   = x_end_sig - 2.U
+    val x_start      = offset_left - axis_size/2
+    val x_end        = offset_left + div_x*div_size_x + axis_size/2
 
-    val y_start_1D  = offset_top - axis_size/2
-    val y_end_1D    = offset_top + axis_size/2 + div_size_y_1D*div_y_1D
+    val y_start_1D   = offset_top - axis_size/2
+    val y_end_1D     = offset_top + axis_size/2 + div_size_y_1D*div_y_1D
 
     val y_start_2D     = div_y_1D*div_size_y_1D + 2*offset_top - axis_size
     val y_end_2D       = div_y_1D*div_size_y_1D + 2*offset_top + div_y_2D*div_size_y_2D + axis_size
@@ -157,6 +159,15 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
 
     when (io.o_addr_x_1D < (x_end - x_start).U) {
         inTreshold_delayed := i_Treshold
+    }
+
+    // relative location of coordinate X
+    val w_temp_addr_x_1D = pixel_x - x_start_addr
+    when ((pixel_x >= x_start_addr) && (pixel_x < x_end_addr)) {
+        io.o_addr_x_1D := w_temp_addr_x_1D(9,1)
+    }
+    .otherwise {
+        io.o_addr_x_1D := 0.U
     }
 
     // Scaler registers
@@ -206,14 +217,6 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     val signal_peak_cond_2 = RegInit(0.U.asTypeOf(params.proto1))
     signal_peak_cond   := ((y_end_1D + axis_size).U - pixel_y).asTypeOf(params.proto1)
     signal_peak_cond_2 := ((y_end_1D).U - pixel_y).asTypeOf(params.proto1)
-
-    // relative location of coordinate X
-    when ((pixel_x >= x_start_sig) && (pixel_x < x_end_sig)) {
-        io.o_addr_x_1D := w_temp_addrx(9,1)
-    }
-    .otherwise {
-        io.o_addr_x_1D := 0.U
-    }
 
     // FFT 1D signal condition
     val cut_cond = RegInit(false.B)
@@ -290,7 +293,7 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     // Generate start signal
     when (video_active) {
         // Start
-        when((pixel_x >= x_start_sig) && (pixel_x < x_end_sig)) {
+        when((pixel_x >= x_start_addr) && (pixel_x < x_end_addr)) {
             io.start := true.B
         }
         .otherwise {

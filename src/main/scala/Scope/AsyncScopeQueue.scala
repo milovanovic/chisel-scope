@@ -71,43 +71,43 @@ class AsyncScopeQueue(params: AsyncScopeQueueParams) extends LazyModule()(Parame
             async_range.get.io.deq_reset := io.reset2.asBool()
 
             // Connect async_scaler_y_1D
-            async_scaler_y_1D.get.io.enq.valid := true.B
+            async_scaler_y_1D.get.io.enq.valid := ~(reset.asBool())
             async_scaler_y_1D.get.io.enq.bits  := io.i_scaler_y_1D.get
             async_scaler_y_1D.get.io.enq_clock := clock
             async_scaler_y_1D.get.io.enq_reset := reset.asBool()
             io.o_scaler_y_1D.get := async_scaler_y_1D.get.io.deq.bits
-            async_scaler_y_1D.get.io.deq.ready := true.B
+            async_scaler_y_1D.get.io.deq.ready := ~(io.reset2.asBool())
             async_scaler_y_1D.get.io.deq_clock := io.clock2
             async_scaler_y_1D.get.io.deq_reset := io.reset2.asBool()
 
             // Connect async_scaler_x_1D
-            async_scaler_x_1D.get.io.enq.valid := true.B
+            async_scaler_x_1D.get.io.enq.valid := ~(reset.asBool())
             async_scaler_x_1D.get.io.enq.bits  := io.i_scaler_x_1D.get
             async_scaler_x_1D.get.io.enq_clock := clock
             async_scaler_x_1D.get.io.enq_reset := reset.asBool()
             io.o_scaler_x_1D.get := async_scaler_x_1D.get.io.deq.bits
-            async_scaler_x_1D.get.io.deq.ready := true.B
+            async_scaler_x_1D.get.io.deq.ready := ~(io.reset2.asBool())
             async_scaler_x_1D.get.io.deq_clock := io.clock2
             async_scaler_x_1D.get.io.deq_reset := io.reset2.asBool()
         }
         if (params.fft_2D) {
             // Connect async_scaler_x_2D
-            async_scaler_x_2D.get.io.enq.valid := true.B
+            async_scaler_x_2D.get.io.enq.valid := ~(reset.asBool())
             async_scaler_x_2D.get.io.enq.bits  := io.i_scaler_x_2D.get
             async_scaler_x_2D.get.io.enq_clock := clock
             async_scaler_x_2D.get.io.enq_reset := reset.asBool()
             io.o_scaler_x_2D.get := async_scaler_x_2D.get.io.deq.bits
-            async_scaler_x_2D.get.io.deq.ready := true.B
+            async_scaler_x_2D.get.io.deq.ready := ~(io.reset2.asBool())
             async_scaler_x_2D.get.io.deq_clock := io.clock2
             async_scaler_x_2D.get.io.deq_reset := io.reset2.asBool()
 
             // Connect async_scaler_y_2D
-            async_scaler_y_2D.get.io.enq.valid := true.B
+            async_scaler_y_2D.get.io.enq.valid := ~(reset.asBool())
             async_scaler_y_2D.get.io.enq.bits  := io.i_scaler_y_2D.get
             async_scaler_y_2D.get.io.enq_clock := clock
             async_scaler_y_2D.get.io.enq_reset := reset.asBool()
             io.o_scaler_y_2D.get := async_scaler_y_2D.get.io.deq.bits
-            async_scaler_y_2D.get.io.deq.ready := true.B
+            async_scaler_y_2D.get.io.deq.ready := ~(io.reset2.asBool())
             async_scaler_y_2D.get.io.deq_clock := io.clock2
             async_scaler_y_2D.get.io.deq_reset := io.reset2.asBool()
 

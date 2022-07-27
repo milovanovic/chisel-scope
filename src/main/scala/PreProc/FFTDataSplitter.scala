@@ -3,6 +3,7 @@ package hdmi.preproc
 import chisel3._
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import chisel3.util._
+import chisel3.experimental.ChiselEnum
 
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.config._
@@ -13,7 +14,7 @@ case class FFTDataSplitterParams(
   dataSize : Int,   // Data logger size
 )
 
-class FFTDataSplitter(params: FFTDataSplitterParams, beatBytes: Int) extends LazyModule()(Parameters.empty) {
+class FFTDataSplitter(params: FFTDataSplitterParams) extends LazyModule()(Parameters.empty) {
   val inNode   = AXI4StreamSlaveNode(AXI4StreamSlaveParameters())
   val outNode0 = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "cut", n = 2))
   val outNode1 = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "treshold", n = 2))
@@ -28,29 +29,42 @@ class FFTDataSplitter(params: FFTDataSplitterParams, beatBytes: Int) extends Laz
     val read = IO(Input(Bool()))
     val i_addr_x = IO(Input(UInt(log2Ceil(params.dataSize).W)))
 
-    val r_addr_x = RegNext(i_addr_x)
+    val r_addr_x = RegNext(i_addr_x, 0.U)
 
     // Memory
     val mem_data = SyncReadMem(params.dataSize, in.bits.data.cloneType)
-    val mem_last = SyncReadMem(params.dataSize, in.bits.last.cloneType)
-    // Signals
 
     // Registers
     val r_counter = RegInit(0.U(log2Ceil(params.dataSize).W))
 
     // Input side must be always ready to avoid stopping fft
-    in.ready  := true.B
+    in.ready  := ~(reset.asBool)
     // FrameBuffer will send read flag
-    out0.valid := read
-    out1.valid := read
-    out2.valid := read
+    val valid = RegNext(RegNext(read, 0.U), 0.U)
+    out0.valid := valid
+    out1.valid := valid
+    out2.valid := valid
+
+    // FSM
+    object State extends ChiselEnum { val sIdle, sActive = Value }
+    val state = RegInit(State.sIdle)
+
+    val w_cut   = mem_data(r_addr_x)(26,11)
+    val w_tresh = mem_data(r_addr_x)(42,27)
+    val w_peak  = mem_data(r_addr_x)(7,0)
+
     // Data
-    out0.bits.data := mem_data(r_addr_x)(26,11)
-    out0.bits.last := mem_last(r_addr_x)
-    out1.bits.data := mem_data(r_addr_x)(42,27)
-    out1.bits.last := mem_last(r_addr_x)
-    out2.bits.data := mem_data(r_addr_x)(7,0)
-    out2.bits.last := mem_last(r_addr_x)
+    when (state === State.sIdle) {
+      out0.bits.data := 0.U
+      out1.bits.data := 0.U
+      out2.bits.data := 0.U
+      when(in.fire() && (r_counter === (params.dataSize - 1).U)) { state := State.sActive }
+    } 
+    .otherwise {
+      out0.bits.data := w_cut 
+      out1.bits.data := w_tresh
+      out2.bits.data := w_peak
+    }
 
     // count data
     when(in.fire()) {
@@ -58,14 +72,13 @@ class FFTDataSplitter(params: FFTDataSplitterParams, beatBytes: Int) extends Laz
       .otherwise {r_counter := r_counter + 1.U}
       // Write to memory
       mem_data(r_counter) := in.bits.data
-      mem_last(r_counter) := in.bits.last
     }
   }
 }
 
 
 trait FFTDataSplitterPins extends FFTDataSplitter {
-  def beatBytes: Int = 8
+  def beatBytes: Int = 6
 
   val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
   val ioOutNode0 = BundleBridgeSink[AXI4StreamBundle]()
@@ -90,6 +103,6 @@ object FFTDataSplitterApp extends App
       dataSize = 1024,
   )
   
-  val lazyDut = LazyModule(new FFTDataSplitter(params, beatBytes=4) with FFTDataSplitterPins)
+  val lazyDut = LazyModule(new FFTDataSplitter(params) with FFTDataSplitterPins)
   (new ChiselStage).execute(Array("--target-dir", "verilog/FFTDataSplitter"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
