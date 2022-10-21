@@ -146,7 +146,7 @@ abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Da
 
         proc1D.module.read_1D    := frameBuffer.io.start
         proc1D.module.i_scaler_x := asyncQ.module.io.o_scaler_x_1D.get
-        proc1D.module.i_addr_x   := frameBuffer.io.o_addr_x_1D
+        proc1D.module.i_addr_x   := frameBuffer.io.o_addr_x_1D(proc1D.module.i_addr_x.getWidth-1,0)
 
         // async
         asyncQ.module.io.clock2 := io.clk_pixel
@@ -155,11 +155,12 @@ abstract class Scope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Da
         asyncQ.module.io.i_scaler_x_1D.get := scaler1D.module.scalerX
         // 2D
         if (params.proc2DParams.procParams.memParams.divideMem) {
-          proc2D.module.io.i_addr_x.get := frameBuffer.io.o_addr_x_2D
-          proc2D.module.io.i_addr_y.get := frameBuffer.io.o_addr_y_2D
+          proc2D.module.io.i_addr_x.get := frameBuffer.io.o_addr_x_2D(log2Ceil(params.proc2DParams.procParams.memParams.dim1)-1,0)
+          proc2D.module.io.i_addr_y.get := frameBuffer.io.o_addr_y_2D(log2Ceil(params.proc2DParams.procParams.memParams.dim2)-1,0)
         }
         else {
-          proc2D.module.io.i_addr_x.get := Cat(frameBuffer.io.o_addr_y_2D, frameBuffer.io.o_addr_x_2D)
+          proc2D.module.io.i_addr_x.get := Cat(frameBuffer.io.o_addr_y_2D(log2Ceil(params.proc2DParams.procParams.memParams.dim2)-1,0), 
+                                               frameBuffer.io.o_addr_x_2D(log2Ceil(params.proc2DParams.procParams.memParams.dim1)-1,0))
         }
         frameBuffer.io.i_FFT_2D := proc2D.module.io.o_data
         asyncQ.module.io.i_scaler_x_2D.get := scaler2D.module.io.o_scalerAxis
@@ -202,13 +203,14 @@ trait AXI4ScopePins extends AXI4Scope[FixedPoint] {
 }
 
 
-class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000, scale_x: Int = 4) {
+class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: BigInt = 0x0000, scale_x: Int = 4, zoh: Int = 1) {
   val params : ScopeParameters[FixedPoint] = ScopeParameters(
     proc1DParams = Proc1DParamsAndAddresses(
-      procParams = (new Proc1DParams(rangeSize, scale_x)).params
+      procParams = (new Proc1DParams(rangeSize, scale_x, zoh)).params
     ),
     scaler1DParams = Scaler1DParamsAndAddresses(
       scalerParams = Scaler1DParams(
+        dataSize = rangeSize,
         scale = scale_x,
       ),
       scalerAddress = AddressSet(startAddress + 0x0000, 0xFF)
@@ -240,6 +242,8 @@ class ScopeParams(rangeSize: Int = 512, dopplerSize: Int = 256, startAddress: Bi
       proto0 = FixedPoint(16.W, 10.BP),
       proto1 = FixedPoint(16.W, 10.BP),
       proto2 = FixedPoint( 8.W,  0.BP),
+      rangeSize   = rangeSize,
+      dopplerSize = dopplerSize,
       imageParams = (new HD1080pNoInterpolation).params,
       beatBytes = 4
     )

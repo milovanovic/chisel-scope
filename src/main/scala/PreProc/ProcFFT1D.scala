@@ -127,6 +127,7 @@ class ProcFFT1DParams(fftSize: Int = 1024) {
       dataSize = fftSize
     ),
     scalerParams = Scaler1DParams(
+      dataSize = fftSize,
       scale   = log2Ceil(128)
     ),
     interpolatorParams = InterpolatorV2Params(

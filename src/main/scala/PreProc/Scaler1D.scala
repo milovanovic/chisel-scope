@@ -17,6 +17,7 @@ import scala.math._
 
 // Scaler1D parameters
 case class Scaler1DParams(
+  dataSize: Int,  // Range FFT size
   scale   : Int,  // Scaler1D
 )
 
@@ -45,8 +46,8 @@ abstract class Scaler1D [D, U, E, O, B <: Data] (params: Scaler1DParams, beatByt
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
 
         // Signals
-        val cut     = in.bits.data(26,11)
-        val tresh   = in.bits.data(42,27)
+        val cut     = in.bits.data(log2Ceil(params.dataSize) + 16, log2Ceil(params.dataSize) + 1)
+        val tresh   = in.bits.data(log2Ceil(params.dataSize) + 32, log2Ceil(params.dataSize) + 16 + 1)
         val w_cut   = Wire(SInt(16.W)) 
         val w_tresh = Wire(UInt(16.W)) 
 
@@ -82,7 +83,7 @@ abstract class Scaler1D [D, U, E, O, B <: Data] (params: Scaler1DParams, beatByt
             w_tresh := tresh << scaleYReg(width-1,0)
           }
         }
-        out.bits.data := Cat(in.bits.data(in.bits.data.getWidth - 1, 43), w_tresh, w_cut, in.bits.data(10, 0))
+        out.bits.data := Cat(in.bits.data(in.bits.data.getWidth - 1, log2Ceil(params.dataSize) + 32 + 1), w_tresh, w_cut, in.bits.data(log2Ceil(params.dataSize), 0))
         in.ready  := out.ready
         out.valid := in.valid
     }  
@@ -117,6 +118,7 @@ trait AXI4Scaler1DStandaloneBlock extends AXI4DspBlock {
 object Scaler1DApp extends App
 {
   val params = Scaler1DParams(
+    dataSize = 1024,
     scale = log2Ceil(256),
   )
   implicit val p: Parameters = Parameters.empty

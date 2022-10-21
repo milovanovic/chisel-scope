@@ -90,7 +90,7 @@ trait AXI4Proc1DOutputPins extends AXI4Proc1D[FixedPoint] {
   val out2 = InModuleBody { ioOutNode2.makeIO() }
 }
 
-class Proc1DParams(fftSize: Int = 1024, scalerSize: Int = log2Ceil(128)) {
+class Proc1DParams(fftSize: Int = 1024, scalerSize: Int = log2Ceil(128), zoh: Int = 1) {
   val params : Proc1DParameters[FixedPoint] = Proc1DParameters (
     dataSplitterParams = FFTDataSplitterParams(
       dataSize = fftSize
@@ -100,7 +100,7 @@ class Proc1DParams(fftSize: Int = 1024, scalerSize: Int = log2Ceil(128)) {
       scalerSize = scalerSize,
       zoh = ZOHParams(
         width = 16,
-        size  = 1
+        size  = zoh
       )
     ),
     interpolatorParams2 = InterpolationParams(
@@ -108,7 +108,7 @@ class Proc1DParams(fftSize: Int = 1024, scalerSize: Int = log2Ceil(128)) {
       scalerSize = scalerSize,
       zoh = ZOHParams(
         width = 8,
-        size  = 1
+        size  = zoh
       )
     ),
   )

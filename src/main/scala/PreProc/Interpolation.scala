@@ -1,6 +1,7 @@
 package hdmi.preproc  
 
 import chisel3._ 
+import chisel3.util.log2Ceil
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import chisel3.experimental.FixedPoint
 import chisel3.internal.requireIsChiselType
@@ -48,8 +49,8 @@ abstract class Interpolation [T <: Data : Real: BinaryRepresentation, D, U, E, O
       val scaler  = IO(Input(UInt((params.scalerSize).W)))
 
       // Additional interpolation factor register
-      val r_scaler = RegInit(0.U((params.scalerSize).W))
-      r_scaler := (1.U << scaler)
+      val r_scaler = RegInit(log2Ceil(params.zoh.size).U((params.scalerSize).W))
+      r_scaler := (log2Ceil(params.zoh.size).U << scaler)
 
       // ZOH
       val zoh       = Module(new ZOH(params.zoh, params.scalerSize))
@@ -62,7 +63,7 @@ abstract class Interpolation [T <: Data : Real: BinaryRepresentation, D, U, E, O
       val z_delayed = RegNext(z, 0.U.asTypeOf(z.cloneType))
 
       // Connect signals
-      zoh.io.start := in.valid
+      zoh.io.start := RegNext(in.valid, false.B)
       in.ready := ~(reset.asBool)
       zoh.io.scaler   := scaler
       u := x - x_delayed

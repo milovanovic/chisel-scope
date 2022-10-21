@@ -30,23 +30,17 @@ class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
   val hold      = RegInit(0.U((params.width).W))
   val counter   = RegInit(0.U((log2Ceil(params.size) + scalerSize + 1).W))
   val scalerReg = RegInit(0.U(scalerSize.W))
-  val r_start   = RegNext(RegNext(io.start, false.B), false.B)
 
   // FSM
   object State extends ChiselEnum {
-    val sIdle, sRead, sWrite = Value
+    val sRead, sWrite = Value
   }
-  val state = RegInit(State.sIdle)
+  val state = RegInit(State.sRead)
   scalerReg := io.scaler
 
   // FSM
-  when (state === State.sIdle) {
-    io.o_data := 0.U
-    counter   := 0.U
-    when(io.start) {state := State.sRead}
-  }
-  .elsewhen (state === State.sRead) {
-    when(r_start) {
+  when (state === State.sRead) {
+    when(io.start || RegNext(io.start, false.B)) {
       io.o_data := io.i_data
       hold      := io.i_data
       state     := State.sWrite
@@ -56,7 +50,7 @@ class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
       io.o_data := io.i_data
       hold      := io.i_data
       counter   := 0.U
-      state     := State.sIdle
+      state     := State.sRead
     }
     
   }
@@ -66,8 +60,7 @@ class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
     when (scalerReg === 0.U && params.size.U === 1.U) {
       when(counter === (params.size.U << scalerReg)) {
         counter := 0.U
-        when(r_start) { state := State.sRead }
-        .otherwise    { state := State.sIdle }
+        state := State.sRead
       }
       .otherwise {
         counter := counter + 1.U
@@ -76,8 +69,7 @@ class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
     .otherwise {
       when(counter === (params.size.U << scalerReg) - 1.U) {
         counter := 0.U
-        when(r_start) { state := State.sRead }
-        .otherwise    { state := State.sIdle }
+        state := State.sRead
       }
       .otherwise {
         counter := counter + 1.U
@@ -86,7 +78,7 @@ class ZOH (val params: ZOHParams, scalerSize: Int) extends Module {
   }
   .otherwise {
     io.o_data := io.i_data
-    state     := State.sIdle
+    state     := State.sRead
     counter   := 0.U
   }
 }

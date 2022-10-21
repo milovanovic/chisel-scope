@@ -51,6 +51,8 @@ case class FrameBufferParameters[T <: Data: Real: BinaryRepresentation] (
   val proto0 : T,
   val proto1 : T,
   val proto2 : T,
+  val rangeSize   : Int,
+  val dopplerSize : Int,
   val imageParams : ImageParameters,
   val beatBytes   : Int
 )
@@ -68,7 +70,7 @@ class FrameBufferIO[T <: Data: Real](val params: FrameBufferParameters[T], val s
     // Load scaler
     val loadScaler = Output(Bool())
     // X_location
-    val o_addr_x_1D = Output(UInt(9.W))
+    val o_addr_x_1D = Output(UInt(log2Ceil(params.imageParams.div_x*params.imageParams.div_size_x).W))
     // Input FFT 1D data
     val i_CUT       = Input(params.proto1)
     val i_Treshold  = Input(params.proto1)
@@ -76,8 +78,8 @@ class FrameBufferIO[T <: Data: Real](val params: FrameBufferParameters[T], val s
     // Input FFT 2D data
     val i_FFT_2D = Input(UInt(24.W))
     // X_location
-    val o_addr_x_2D = Output(UInt(9.W))
-    val o_addr_y_2D = Output(UInt(8.W))
+    val o_addr_x_2D = Output(UInt(log2Ceil(params.imageParams.div_x*params.imageParams.div_size_x).W))
+    val o_addr_y_2D = Output(UInt(log2Ceil(params.imageParams.div_y_2D*params.imageParams.div_size_y_2D).W))
     // Scaler signals
     val i_scaler = Input(UInt(10.W))
 }
@@ -164,7 +166,7 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     // relative location of coordinate X
     val w_temp_addr_x_1D = pixel_x - x_start_addr
     when ((pixel_x >= x_start_addr) && (pixel_x < x_end_addr)) {
-        io.o_addr_x_1D := w_temp_addr_x_1D(9,1)
+        io.o_addr_x_1D := w_temp_addr_x_1D >> log2Ceil(params.imageParams.div_x*params.imageParams.div_size_x/params.rangeSize)
     }
     .otherwise {
         io.o_addr_x_1D := 0.U
@@ -176,7 +178,7 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     // relative location of coordinate X
     val w_temp_addrx = pixel_x - x_start_sig
     when ((pixel_x >= x_start_sig) && (pixel_x < x_end_sig)) {
-        io.o_addr_x_2D := w_temp_addrx(9,1) >> i_scaler
+        io.o_addr_x_2D := (w_temp_addrx >> log2Ceil(params.imageParams.div_x*params.imageParams.div_size_x/params.rangeSize)) >> i_scaler
     }
     .otherwise {
         io.o_addr_x_2D := 0.U
@@ -184,7 +186,7 @@ class FrameBuffer[T <: Data: Real](params: FrameBufferParameters[T], scalerWidth
     // relative location of coordinate Y
     val w_temp_addry = pixel_y - y_start_sig_2D
     when ((pixel_y >= y_start_sig_2D) && (pixel_y < y_end_sig_2D)) {
-        io.o_addr_y_2D := w_temp_addry(8,1)
+        io.o_addr_y_2D := w_temp_addry >> log2Ceil(params.imageParams.div_y_2D*params.imageParams.div_size_y_2D/params.dopplerSize)
     }
     .otherwise {
         io.o_addr_y_2D := 0.U
@@ -412,6 +414,8 @@ object FrameBufferApp extends App
       proto0 = FixedPoint(16.W, 10.BP),
       proto1 = FixedPoint(16.W, 10.BP),
       proto2 = FixedPoint( 8.W,  0.BP),
+      rangeSize   = 512,
+      dopplerSize = 256,
       imageParams = HD1080p,
       beatBytes = 4
   )

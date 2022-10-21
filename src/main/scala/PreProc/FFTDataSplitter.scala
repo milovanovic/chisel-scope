@@ -49,10 +49,9 @@ class FFTDataSplitter(params: FFTDataSplitterParams) extends LazyModule()(Parame
     object State extends ChiselEnum { val sIdle, sActive = Value }
     val state = RegInit(State.sIdle)
 
-    val w_cut   = mem_data(r_addr_x)(26,11)
-    val w_tresh = mem_data(r_addr_x)(42,27)
-    val w_peak  = mem_data(r_addr_x)(7,0)
-
+    val w_cut   = mem_data(r_addr_x)(log2Ceil(params.dataSize) + 16, log2Ceil(params.dataSize) + 1)
+    val w_tresh = mem_data(r_addr_x)(log2Ceil(params.dataSize) + 32, log2Ceil(params.dataSize) + 16 + 1)
+    val w_peak  = Cat(0.U(7.W), mem_data(r_addr_x)(0))
     // Data
     when (state === State.sIdle) {
       out0.bits.data := 0.U
@@ -68,11 +67,36 @@ class FFTDataSplitter(params: FFTDataSplitterParams) extends LazyModule()(Parame
 
     // count data
     when(in.fire()) {
-      when((r_counter === (params.dataSize - 1).U) || in.bits.last) {r_counter := 0.U }
+      when((r_counter === (params.dataSize - 1).U)) {r_counter := 0.U }// || in.bits.last) {r_counter := 0.U }
       .otherwise {r_counter := r_counter + 1.U}
       // Write to memory
       mem_data(r_counter) := in.bits.data
     }
+
+    // ILA BlackBox for Vivado
+      class ILA_SPLIT extends BlackBox {
+        val io = IO(new Bundle {
+          val clk     = Input(Clock())
+          val probe0  = Input(UInt(48.W))
+          val probe1  = Input(UInt(8.W))
+          val probe2  = Input(UInt(1.W))
+          val probe3  = Input(UInt(1.W))
+          val probe4  = Input(UInt(16.W))
+          val probe5  = Input(UInt(16.W))
+          val probe6  = Input(UInt(8.W))
+          val probe7  = Input(UInt(8.W))
+        })
+      }
+      val ila = Module(new ILA_SPLIT)
+      ila.io.clk := clock
+      ila.io.probe0 := in.bits.data
+      ila.io.probe1 := r_counter
+      ila.io.probe2 := in.fire()
+      ila.io.probe3 := in.bits.last
+      ila.io.probe4 := out0.bits.data
+      ila.io.probe5 := out1.bits.data
+      ila.io.probe6 := out2.bits.data
+      ila.io.probe7 := r_addr_x
   }
 }
 
